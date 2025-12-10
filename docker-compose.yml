@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  arxivscribe:
+    build: .
+    container_name: arxivscribe
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+      - ./config.yaml:/app/config.yaml:ro
+      - ./arxivscribe.log:/app/arxivscribe.log
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+    env_file:
+      - .env

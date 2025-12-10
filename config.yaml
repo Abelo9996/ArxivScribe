@@ -1,0 +1,51 @@
+# Bot Configuration
+bot:
+  prefix: "!"  # Command prefix (not used for slash commands)
+
+# Discord Configuration
+discord:
+  # Token should be set via DISCORD_BOT_TOKEN environment variable
+  sync_commands_on_startup: true
+
+# arXiv Configuration
+arxiv:
+  # Categories to monitor
+  categories:
+    - cs.LG  # Machine Learning
+    - cs.AI  # Artificial Intelligence
+    - cs.CL  # Computation and Language
+    - cs.CV  # Computer Vision
+    - stat.ML  # Statistics - Machine Learning
+    - cs.IR  # Information Retrieval
+  
+  # Maximum papers to fetch per category per run
+  max_results_per_category: 50
+
+# LLM Configuration
+llm:
+  # Provider: 'openai' or 'huggingface'
+  provider: openai
+  
+  # Model name (provider-specific)
+  # OpenAI: gpt-3.5-turbo, gpt-4, etc.
+  # HuggingFace: facebook/bart-large-cnn, etc.
+  model: gpt-3.5-turbo
+  
+  # API key should be set via environment variable:
+  # - OPENAI_API_KEY for OpenAI
+  # - HUGGINGFACE_API_KEY for HuggingFace
+
+# Schedule Configuration
+schedule:
+  # Time to run daily digest (24-hour format)
+  hour: 9
+  minute: 0
+
+# Storage Configuration
+storage:
+  database_path: arxivscribe.db
+
+# Logging Configuration
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: arxivscribe.log
