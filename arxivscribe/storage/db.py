@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-    """Async SQLite database for subscriptions, papers, votes, and guild settings."""
+    """Async SQLite database for subscriptions, papers, and votes."""
 
     def __init__(self, db_path: str = "arxivscribe.db"):
         self.db_path = db_path
@@ -21,13 +21,12 @@ class DatabaseManager:
         return self._conn
 
     async def initialize(self):
-        """Create tables if they don't exist."""
         conn = await self._get_conn()
         await conn.executescript("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guild_id INTEGER NOT NULL,
-                channel_id INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL DEFAULT 0,
+                channel_id INTEGER NOT NULL DEFAULT 0,
                 keyword TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(guild_id, channel_id, keyword)
@@ -40,33 +39,13 @@ class DatabaseManager:
                 authors TEXT,
                 published TEXT,
                 categories TEXT,
+                primary_category TEXT,
                 url TEXT,
                 pdf_url TEXT,
                 summary TEXT,
+                matched_keywords TEXT,
+                score INTEGER DEFAULT 0,
                 fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS posted_papers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                paper_id TEXT NOT NULL,
-                guild_id INTEGER NOT NULL,
-                channel_id INTEGER NOT NULL,
-                message_id INTEGER NOT NULL,
-                posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (paper_id) REFERENCES papers(id),
-                UNIQUE(paper_id, guild_id, channel_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS votes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                paper_id TEXT NOT NULL,
-                user_id INTEGER NOT NULL,
-                guild_id INTEGER NOT NULL,
-                channel_id INTEGER NOT NULL,
-                vote_type TEXT NOT NULL CHECK(vote_type IN ('upvote', 'downvote', 'maybe')),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (paper_id) REFERENCES papers(id),
-                UNIQUE(paper_id, user_id, vote_type)
             );
 
             CREATE TABLE IF NOT EXISTS metadata (
@@ -75,27 +54,12 @@ class DatabaseManager:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS guild_settings (
-                guild_id INTEGER PRIMARY KEY,
-                categories TEXT,
-                digest_channel_id INTEGER,
-                digest_hour INTEGER DEFAULT 9,
-                digest_minute INTEGER DEFAULT 0,
-                timezone TEXT DEFAULT 'UTC',
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_subscriptions_guild_channel
-                ON subscriptions(guild_id, channel_id);
-            CREATE INDEX IF NOT EXISTS idx_posted_papers_lookup
-                ON posted_papers(paper_id, guild_id, channel_id);
-            CREATE INDEX IF NOT EXISTS idx_votes_paper
-                ON votes(paper_id);
-            CREATE INDEX IF NOT EXISTS idx_papers_fetched
-                ON papers(fetched_at);
+            CREATE INDEX IF NOT EXISTS idx_papers_fetched ON papers(fetched_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_papers_score ON papers(score DESC);
+            CREATE INDEX IF NOT EXISTS idx_subscriptions_kw ON subscriptions(keyword);
         """)
         await conn.commit()
-        logger.info("Database initialized successfully")
+        logger.info("Database initialized")
 
     # --- Subscriptions ---
 
@@ -126,103 +90,94 @@ class DatabaseManager:
             "SELECT keyword FROM subscriptions WHERE guild_id = ? AND channel_id = ?",
             (guild_id, channel_id)
         )
-        rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        return [row[0] for row in await cursor.fetchall()]
+
+    async def get_all_subscriptions(self) -> List[str]:
+        conn = await self._get_conn()
+        cursor = await conn.execute("SELECT DISTINCT keyword FROM subscriptions ORDER BY keyword")
+        return [row[0] for row in await cursor.fetchall()]
 
     async def get_all_subscribed_channels(self) -> List[Tuple[int, int]]:
         conn = await self._get_conn()
         cursor = await conn.execute("SELECT DISTINCT guild_id, channel_id FROM subscriptions")
-        rows = await cursor.fetchall()
-        return [(row[0], row[1]) for row in rows]
+        return [(row[0], row[1]) for row in await cursor.fetchall()]
 
-    # --- Papers ---
+    # --- Papers (local web) ---
 
-    async def store_paper(self, paper: dict, guild_id: int, channel_id: int, message_id: int):
+    async def store_paper_local(self, paper: dict):
         conn = await self._get_conn()
         await conn.execute("""
-            INSERT OR REPLACE INTO papers
-            (id, title, abstract, authors, published, categories, url, pdf_url, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO papers
+            (id, title, abstract, authors, published, categories, primary_category, url, pdf_url, summary, matched_keywords)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             paper['id'], paper['title'], paper.get('abstract', ''),
             ','.join(paper.get('authors', [])), paper.get('published', ''),
-            ','.join(paper.get('categories', [])), paper['url'],
-            paper.get('pdf_url', ''), paper.get('summary', '')
+            ','.join(paper.get('categories', [])), paper.get('primary_category', ''),
+            paper.get('url', ''), paper.get('pdf_url', ''),
+            paper.get('summary', ''), paper.get('matched_keywords', '')
         ))
-        await conn.execute("""
-            INSERT OR REPLACE INTO posted_papers
-            (paper_id, guild_id, channel_id, message_id)
-            VALUES (?, ?, ?, ?)
-        """, (paper['id'], guild_id, channel_id, message_id))
         await conn.commit()
 
-    async def is_paper_posted(self, paper_id: str, guild_id: int, channel_id: int) -> bool:
+    async def is_paper_stored(self, paper_id: str) -> bool:
         conn = await self._get_conn()
-        cursor = await conn.execute(
-            "SELECT 1 FROM posted_papers WHERE paper_id = ? AND guild_id = ? AND channel_id = ?",
-            (paper_id, guild_id, channel_id)
-        )
+        cursor = await conn.execute("SELECT 1 FROM papers WHERE id = ?", (paper_id,))
         return await cursor.fetchone() is not None
 
-    async def get_paper_by_message(self, guild_id: int, channel_id: int, message_id: int) -> Optional[str]:
+    async def get_recent_papers(
+        self, limit: int = 50, offset: int = 0,
+        keyword: Optional[str] = None, sort: str = "date"
+    ) -> List[dict]:
         conn = await self._get_conn()
-        cursor = await conn.execute(
-            "SELECT paper_id FROM posted_papers WHERE guild_id = ? AND channel_id = ? AND message_id = ?",
-            (guild_id, channel_id, message_id)
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else None
+        query = "SELECT * FROM papers"
+        params = []
 
-    # --- Votes ---
+        if keyword:
+            query += " WHERE (title LIKE ? OR abstract LIKE ? OR matched_keywords LIKE ?)"
+            kw = f"%{keyword}%"
+            params.extend([kw, kw, kw])
 
-    async def add_vote(self, paper_id: str, user_id: int, guild_id: int, channel_id: int, vote_type: str):
-        conn = await self._get_conn()
-        await conn.execute("""
-            INSERT OR REPLACE INTO votes
-            (paper_id, user_id, guild_id, channel_id, vote_type)
-            VALUES (?, ?, ?, ?, ?)
-        """, (paper_id, user_id, guild_id, channel_id, vote_type))
-        await conn.commit()
+        sort_map = {"date": "fetched_at DESC", "votes": "score DESC", "title": "title ASC"}
+        query += f" ORDER BY {sort_map.get(sort, 'fetched_at DESC')}"
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
-    async def remove_vote(self, paper_id: str, user_id: int, vote_type: str):
-        conn = await self._get_conn()
-        await conn.execute(
-            "DELETE FROM votes WHERE paper_id = ? AND user_id = ? AND vote_type = ?",
-            (paper_id, user_id, vote_type)
-        )
-        await conn.commit()
-
-    async def get_vote_summary(self, paper_id: str) -> dict:
-        conn = await self._get_conn()
-        cursor = await conn.execute("""
-            SELECT
-                COALESCE(SUM(CASE WHEN vote_type = 'upvote' THEN 1 ELSE 0 END), 0) as upvotes,
-                COALESCE(SUM(CASE WHEN vote_type = 'downvote' THEN 1 ELSE 0 END), 0) as downvotes,
-                COALESCE(SUM(CASE WHEN vote_type = 'maybe' THEN 1 ELSE 0 END), 0) as maybe
-            FROM votes WHERE paper_id = ?
-        """, (paper_id,))
-        row = await cursor.fetchone()
-        return {'upvotes': row[0], 'downvotes': row[1], 'maybe': row[2]}
-
-    async def get_top_papers(self, guild_id: int, channel_id: int, days: int = 7) -> List[dict]:
-        conn = await self._get_conn()
-        since = (datetime.utcnow() - timedelta(days=days)).isoformat()
-        cursor = await conn.execute("""
-            SELECT
-                p.id, p.title, p.url,
-                COALESCE(SUM(CASE WHEN v.vote_type = 'upvote' THEN 1 ELSE 0 END), 0) as upvotes,
-                COALESCE(SUM(CASE WHEN v.vote_type = 'downvote' THEN 1 ELSE 0 END), 0) as downvotes
-            FROM papers p
-            JOIN posted_papers pp ON p.id = pp.paper_id
-            LEFT JOIN votes v ON p.id = v.paper_id
-            WHERE pp.guild_id = ? AND pp.channel_id = ? AND pp.posted_at >= ?
-            GROUP BY p.id
-            HAVING upvotes > 0
-            ORDER BY (upvotes - downvotes) DESC
-            LIMIT 10
-        """, (guild_id, channel_id, since))
+        cursor = await conn.execute(query, params)
         rows = await cursor.fetchall()
-        return [{'id': r[0], 'title': r[1], 'url': r[2], 'upvotes': r[3], 'downvotes': r[4]} for r in rows]
+        return [self._paper_from_row(row) for row in rows]
+
+    async def count_papers(self, keyword: Optional[str] = None) -> int:
+        conn = await self._get_conn()
+        if keyword:
+            kw = f"%{keyword}%"
+            cursor = await conn.execute(
+                "SELECT COUNT(*) FROM papers WHERE title LIKE ? OR abstract LIKE ? OR matched_keywords LIKE ?",
+                (kw, kw, kw)
+            )
+        else:
+            cursor = await conn.execute("SELECT COUNT(*) FROM papers")
+        return (await cursor.fetchone())[0]
+
+    async def vote_paper(self, paper_id: str, delta: int):
+        conn = await self._get_conn()
+        await conn.execute("UPDATE papers SET score = score + ? WHERE id = ?", (delta, paper_id))
+        await conn.commit()
+
+    async def get_paper_score(self, paper_id: str) -> int:
+        conn = await self._get_conn()
+        cursor = await conn.execute("SELECT score FROM papers WHERE id = ?", (paper_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    def _paper_from_row(self, row) -> dict:
+        return {
+            'id': row[0], 'title': row[1], 'abstract': row[2],
+            'authors': row[3].split(',') if row[3] else [],
+            'published': row[4], 'categories': row[5].split(',') if row[5] else [],
+            'primary_category': row[6], 'url': row[7], 'pdf_url': row[8],
+            'summary': row[9], 'matched_keywords': row[10].split(',') if row[10] else [],
+            'score': row[11], 'fetched_at': row[12]
+        }
 
     # --- Metadata ---
 
@@ -239,59 +194,24 @@ class DatabaseManager:
 
     async def update_last_fetch_time(self):
         conn = await self._get_conn()
-        now = datetime.utcnow().isoformat()
         await conn.execute("""
             INSERT OR REPLACE INTO metadata (key, value, updated_at)
             VALUES ('last_fetch_time', ?, CURRENT_TIMESTAMP)
-        """, (now,))
-        await conn.commit()
-
-    # --- Guild Settings ---
-
-    async def get_guild_settings(self, guild_id: int) -> Optional[dict]:
-        conn = await self._get_conn()
-        cursor = await conn.execute("SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,))
-        row = await cursor.fetchone()
-        if row:
-            return {
-                'guild_id': row[0], 'categories': row[1],
-                'digest_channel_id': row[2], 'digest_hour': row[3],
-                'digest_minute': row[4], 'timezone': row[5]
-            }
-        return None
-
-    async def set_guild_categories(self, guild_id: int, categories: List[str]):
-        conn = await self._get_conn()
-        cats = ','.join(categories)
-        await conn.execute("""
-            INSERT INTO guild_settings (guild_id, categories) VALUES (?, ?)
-            ON CONFLICT(guild_id) DO UPDATE SET categories = ?, updated_at = CURRENT_TIMESTAMP
-        """, (guild_id, cats, cats))
+        """, (datetime.utcnow().isoformat(),))
         await conn.commit()
 
     # --- Stats ---
 
-    async def get_stats(self, guild_id: int, channel_id: int) -> dict:
+    async def get_global_stats(self) -> dict:
         conn = await self._get_conn()
-        cursor = await conn.execute(
-            "SELECT COUNT(*) FROM subscriptions WHERE guild_id = ? AND channel_id = ?",
-            (guild_id, channel_id)
-        )
-        sub_count = (await cursor.fetchone())[0]
-
-        cursor = await conn.execute(
-            "SELECT COUNT(*) FROM posted_papers WHERE guild_id = ? AND channel_id = ?",
-            (guild_id, channel_id)
-        )
-        paper_count = (await cursor.fetchone())[0]
-
-        cursor = await conn.execute(
-            "SELECT COUNT(*) FROM votes v JOIN posted_papers pp ON v.paper_id = pp.paper_id WHERE pp.guild_id = ? AND pp.channel_id = ?",
-            (guild_id, channel_id)
-        )
-        vote_count = (await cursor.fetchone())[0]
-
-        return {'subscriptions': sub_count, 'papers_posted': paper_count, 'total_votes': vote_count}
+        papers = (await (await conn.execute("SELECT COUNT(*) FROM papers")).fetchone())[0]
+        subs = (await (await conn.execute("SELECT COUNT(DISTINCT keyword) FROM subscriptions")).fetchone())[0]
+        votes = (await (await conn.execute("SELECT COALESCE(SUM(ABS(score)), 0) FROM papers")).fetchone())[0]
+        last = await self.get_last_fetch_time()
+        return {
+            'total_papers': papers, 'total_subscriptions': subs,
+            'total_votes': votes, 'last_fetch': last.isoformat() if last else None
+        }
 
     async def close(self):
         if self._conn:

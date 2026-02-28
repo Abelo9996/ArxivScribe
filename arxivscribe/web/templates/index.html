@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArxivScribe</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>📚 ArxivScribe</h1>
+            <span class="subtitle">AI-powered arXiv paper digests</span>
+        </div>
+        <div class="header-right">
+            <div class="stats">
+                <span title="Papers">📄 <span id="stat-papers">{{ stats.total_papers }}</span></span>
+                <span title="Subscriptions">🔔 <span id="stat-subs">{{ stats.total_subscriptions }}</span></span>
+            </div>
+            <button id="btn-theme" class="icon-btn" title="Toggle theme">🌙</button>
+        </div>
+    </header>
+
+    <main>
+        <!-- Controls bar -->
+        <section class="controls">
+            <div class="control-group">
+                <h3>Keywords</h3>
+                <div class="keyword-input">
+                    <input type="text" id="keyword-input" placeholder="Add keyword (e.g. transformer, RLHF)" />
+                    <button id="btn-subscribe" class="btn btn-primary">+ Add</button>
+                </div>
+                <div id="keyword-tags" class="tags">
+                    {% for kw in subscriptions %}
+                    <span class="tag">{{ kw }} <button class="tag-remove" data-keyword="{{ kw }}">×</button></span>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>Actions</h3>
+                <div class="action-buttons">
+                    <button id="btn-fetch" class="btn btn-accent">📡 Fetch Papers</button>
+                    <button id="btn-fetch-all" class="btn btn-secondary">📡 Fetch All (no filter)</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>Search arXiv</h3>
+                <div class="keyword-input">
+                    <input type="text" id="search-input" placeholder="Search arXiv..." />
+                    <button id="btn-search" class="btn btn-primary">🔍</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Status -->
+        <div id="status-bar" class="status-bar hidden"></div>
+
+        <!-- Sort controls -->
+        <section class="sort-bar">
+            <span>Sort by:</span>
+            <button class="sort-btn active" data-sort="date">📅 Date</button>
+            <button class="sort-btn" data-sort="votes">👍 Votes</button>
+            <button class="sort-btn" data-sort="title">🔤 Title</button>
+            <span class="paper-count"><span id="paper-count">{{ papers|length }}</span> papers</span>
+        </section>
+
+        <!-- Papers -->
+        <section id="papers" class="papers">
+            {% for paper in papers %}
+            <article class="paper-card" data-id="{{ paper.id }}">
+                <div class="paper-vote">
+                    <button class="vote-btn vote-up" data-id="{{ paper.id }}" data-type="up">▲</button>
+                    <span class="vote-score">{{ paper.score }}</span>
+                    <button class="vote-btn vote-down" data-id="{{ paper.id }}" data-type="down">▼</button>
+                </div>
+                <div class="paper-content">
+                    <h3 class="paper-title">
+                        <a href="{{ paper.url }}" target="_blank" rel="noopener">{{ paper.title }}</a>
+                    </h3>
+                    <p class="paper-authors">{{ paper.authors | join(', ') }}</p>
+                    {% if paper.summary %}
+                    <p class="paper-summary">{{ paper.summary }}</p>
+                    {% endif %}
+                    <div class="paper-meta">
+                        {% for cat in paper.categories %}
+                        <span class="cat-tag">{{ cat }}</span>
+                        {% endfor %}
+                        {% for kw in paper.matched_keywords %}
+                        {% if kw %}
+                        <span class="kw-tag">{{ kw }}</span>
+                        {% endif %}
+                        {% endfor %}
+                        <span class="paper-date">{{ paper.published[:10] if paper.published else '' }}</span>
+                        {% if paper.pdf_url %}
+                        <a href="{{ paper.pdf_url }}" target="_blank" class="pdf-link">📄 PDF</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </section>
+
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <span>Loading...</span>
+        </div>
+
+        <div id="empty-state" class="empty-state {% if papers %}hidden{% endif %}">
+            <p>🔭 No papers yet</p>
+            <p>Add some keywords and click <strong>Fetch Papers</strong> to get started.</p>
+        </div>
+    </main>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

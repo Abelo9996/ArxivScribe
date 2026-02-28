@@ -1,12 +1,11 @@
-# Bot Configuration
-bot:
-  prefix: "!"
+# ArxivScribe Configuration
 
-# Discord Configuration
-discord:
-  sync_commands_on_startup: true
+# Server
+server:
+  host: 127.0.0.1
+  port: 8000
 
-# arXiv Configuration
+# arXiv
 arxiv:
   categories:
     - cs.LG   # Machine Learning
@@ -16,24 +15,19 @@ arxiv:
     - stat.ML  # Statistics - Machine Learning
     - cs.IR   # Information Retrieval
   max_results_per_category: 50
-  rate_limit_seconds: 3.0  # arXiv asks for 3s between requests
+  rate_limit_seconds: 3.0
 
-# LLM Configuration
+# LLM (optional — works without it, just no summaries)
 llm:
   provider: openai
-  model: gpt-4o-mini      # Cost-effective, fast, good quality
-  max_concurrent: 5        # Max parallel summarization requests
+  model: gpt-4o-mini
+  max_concurrent: 5
 
-# Schedule Configuration
-schedule:
-  hour: 9    # UTC — daily digest time
-  minute: 0
-
-# Storage Configuration
+# Storage
 storage:
   database_path: arxivscribe.db
 
-# Logging Configuration
+# Logging
 logging:
   level: INFO
   file: arxivscribe.log

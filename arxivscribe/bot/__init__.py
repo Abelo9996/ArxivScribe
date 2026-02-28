@@ -1,1 +1,1 @@
-"""Discord bot core functionality."""
+# bot module
