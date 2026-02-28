@@ -78,16 +78,6 @@ class ArxivFetcher:
                     papers = await self._fetch_category(session, category, max_per_cat)
                     for paper in papers:
                         if paper['id'] not in seen_ids:
-                            # Filter by date if published info available
-                            if paper.get('published'):
-                                try:
-                                    pub_dt = datetime.fromisoformat(
-                                        paper['published'].replace("Z", "+00:00")
-                                    ).replace(tzinfo=None)
-                                    if pub_dt < since:
-                                        continue
-                                except (ValueError, TypeError):
-                                    pass  # If we can't parse, include it
                             all_papers.append(paper)
                             seen_ids.add(paper['id'])
                     logger.info(f"Fetched {len(papers)} papers from {category}")

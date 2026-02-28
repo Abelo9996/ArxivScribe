@@ -77,36 +77,32 @@ async def fetch_papers(
     use_keywords: bool = Query(True, description="Filter by subscribed keywords")
 ):
     """Fetch new papers from arXiv, optionally filter and summarize."""
-    last_fetch = await _db.get_last_fetch_time()
-    papers = await _fetcher.fetch_papers(categories=_categories, since=last_fetch)
+    papers = await _fetcher.fetch_papers(categories=_categories)
 
     if not papers:
-        return {"status": "ok", "count": 0, "message": "No new papers found"}
+        return {"status": "ok", "fetched": 0, "new": 0, "message": "No papers found on arXiv"}
 
     # Filter by keywords if requested
+    matched_kw_map = {}
     if use_keywords:
         keywords = await _db.get_channel_subscriptions(0, 0)
         if keywords:
             filtered = KeywordFilter.filter_papers_by_keywords(papers, keywords)
+            matched_kw_map = {p['id']: list(kw) for p, kw in filtered}
             papers = [p for p, _ in filtered]
-            # Store matched keywords
-            kw_map = {p['id']: list(kw) for p, kw in KeywordFilter.filter_papers_by_keywords(
-                await _fetcher.fetch_papers(categories=_categories, since=last_fetch), keywords
-            )}
-        else:
-            kw_map = {}
-    else:
-        kw_map = {}
+
+    if not papers:
+        return {"status": "ok", "fetched": 0, "new": 0, "message": "No papers matched your keywords"}
 
     # Summarize
-    if summarize and _summarizer and papers:
+    if summarize and _summarizer:
         papers = await _summarizer.batch_summarize(papers)
 
     # Store
     stored = 0
     for paper in papers:
         if not await _db.is_paper_stored(paper['id']):
-            paper['matched_keywords'] = ','.join(kw_map.get(paper['id'], []))
+            paper['matched_keywords'] = ','.join(matched_kw_map.get(paper['id'], []))
             await _db.store_paper_local(paper)
             stored += 1
 
