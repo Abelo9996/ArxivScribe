@@ -120,7 +120,7 @@ async def get_papers(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     keyword: Optional[str] = None,
-    sort: str = Query("date", regex="^(date|votes|title)$")
+    sort: str = Query("date", pattern="^(date|votes|title)$")
 ):
     """Get stored papers."""
     papers = await _db.get_recent_papers(limit=limit, offset=offset, keyword=keyword, sort=sort)
@@ -139,7 +139,7 @@ async def search_arxiv(q: str = Query(..., min_length=2), count: int = Query(10,
 
 
 @router.post("/api/vote/{paper_id}")
-async def vote(paper_id: str, vote_type: str = Query(..., regex="^(up|down)$")):
+async def vote(paper_id: str, vote_type: str = Query(..., pattern="^(up|down)$")):
     """Vote on a paper."""
     await _db.vote_paper(paper_id, 1 if vote_type == "up" else -1)
     score = await _db.get_paper_score(paper_id)

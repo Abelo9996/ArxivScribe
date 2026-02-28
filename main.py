@@ -91,7 +91,7 @@ def main():
     host = config.get('server', {}).get('host', '127.0.0.1')
     port = config.get('server', {}).get('port', 8000)
 
-    print(f"\n  📚 ArxivScribe running at http://{host}:{port}\n")
+    print(f"\n  ArxivScribe running at http://{host}:{port}\n")
     webbrowser.open(f"http://{host}:{port}")
 
     uvicorn.run(
