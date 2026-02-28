@@ -2,7 +2,7 @@
 import discord
 from discord.ext import commands
 import logging
-from typing import List, Optional
+from typing import List
 from datetime import datetime
 
 from arxivscribe.arxiv.fetcher import ArxivFetcher
@@ -18,25 +18,10 @@ class DigestManager:
     """Manages the paper digest workflow."""
 
     def __init__(
-        self,
-        bot: commands.Bot,
-        db: DatabaseManager,
-        fetcher: ArxivFetcher,
-        summarizer: Summarizer,
-        voting_system: VotingSystem,
-        categories: List[str]
+        self, bot: commands.Bot, db: DatabaseManager,
+        fetcher: ArxivFetcher, summarizer: Summarizer,
+        voting_system: VotingSystem, categories: List[str]
     ):
-        """
-        Initialize digest manager.
-        
-        Args:
-            bot: Discord bot instance
-            db: Database manager
-            fetcher: ArXiv paper fetcher
-            summarizer: LLM summarizer
-            voting_system: Voting system
-            categories: arXiv categories to fetch
-        """
         self.bot = bot
         self.db = db
         self.fetcher = fetcher
@@ -45,155 +30,125 @@ class DigestManager:
         self.categories = categories
 
     async def run_digest_for_all_channels(self) -> int:
-        """
-        Run digest for all subscribed channels.
-        
-        Returns:
-            Total number of papers posted
-        """
+        """Run digest for all subscribed channels."""
         total_posted = 0
-        
-        # Get all unique channels with subscriptions
-        channels = self.db.get_all_subscribed_channels()
-        
+        channels = await self.db.get_all_subscribed_channels()
+
         for guild_id, channel_id in channels:
             try:
                 channel = self.bot.get_channel(channel_id)
                 if channel is None:
-                    logger.warning(f"Could not find channel {channel_id}")
+                    logger.warning(f"Channel {channel_id} not found, skipping")
                     continue
-                
                 count = await self.run_digest_for_channel(channel)
                 total_posted += count
             except Exception as e:
                 logger.error(f"Error running digest for channel {channel_id}: {e}")
-        
+
         return total_posted
 
     async def run_digest_for_channel(self, channel: discord.TextChannel) -> int:
-        """
-        Run digest for a specific channel.
-        
-        Args:
-            channel: Discord text channel
-            
-        Returns:
-            Number of papers posted
-        """
+        """Run digest for a specific channel."""
         guild_id = channel.guild.id
         channel_id = channel.id
-        
-        # Get channel's subscribed keywords
-        keywords = self.db.get_channel_subscriptions(guild_id, channel_id)
-        
+
+        keywords = await self.db.get_channel_subscriptions(guild_id, channel_id)
         if not keywords:
-            logger.info(f"Channel {channel_id} has no subscriptions, skipping.")
             return 0
-        
-        logger.info(f"Running digest for channel {channel.name} with keywords: {keywords}")
-        
-        # Fetch new papers
-        last_fetch = self.db.get_last_fetch_time()
-        papers = await self.fetcher.fetch_papers(
-            categories=self.categories,
-            since=last_fetch
-        )
-        
-        logger.info(f"Fetched {len(papers)} papers from arXiv")
-        
+
+        logger.info(f"Digest for #{channel.name}: keywords={keywords}")
+
+        # Check guild-specific categories
+        guild_settings = await self.db.get_guild_settings(guild_id)
+        categories = self.categories
+        if guild_settings and guild_settings.get('categories'):
+            categories = guild_settings['categories'].split(',')
+
+        # Fetch papers
+        last_fetch = await self.db.get_last_fetch_time()
+        papers = await self.fetcher.fetch_papers(categories=categories, since=last_fetch)
+
         if not papers:
             return 0
-        
-        # Filter papers by keywords
-        filtered_papers = KeywordFilter.filter_papers_by_keywords(papers, keywords)
-        
-        logger.info(f"Filtered to {len(filtered_papers)} papers matching keywords")
-        
-        if not filtered_papers:
+
+        logger.info(f"Fetched {len(papers)} papers, filtering by {len(keywords)} keyword(s)")
+
+        # Filter
+        filtered = KeywordFilter.filter_papers_by_keywords(papers, keywords)
+        if not filtered:
             return 0
-        
-        # Summarize and post each paper
-        posted_count = 0
-        for paper, matched_keywords in filtered_papers:
+
+        # Summarize and post
+        posted = 0
+        for paper, matched_keywords in filtered:
             try:
-                # Check if already posted to this channel
-                if self.db.is_paper_posted(paper['id'], guild_id, channel_id):
-                    logger.debug(f"Paper {paper['id']} already posted to channel {channel_id}")
+                if await self.db.is_paper_posted(paper['id'], guild_id, channel_id):
                     continue
-                
-                # Generate summary
-                summary = await self.summarizer.summarize(paper)
-                paper['summary'] = summary
-                
-                # Post to channel
+
+                paper['summary'] = await self.summarizer.summarize(paper)
                 message = await self._post_paper(channel, paper, matched_keywords)
-                
-                # Add voting reactions
                 await self.voting_system.add_voting_reactions(message)
-                
-                # Store in database
-                self.db.store_paper(paper, guild_id, channel_id, message.id)
-                
-                posted_count += 1
-                logger.info(f"Posted paper {paper['id']} to channel {channel.name}")
-                
+                await self.db.store_paper(paper, guild_id, channel_id, message.id)
+                posted += 1
+
             except Exception as e:
-                logger.error(f"Error processing paper {paper.get('id', 'unknown')}: {e}")
-        
-        # Update last fetch time
-        self.db.update_last_fetch_time()
-        
-        return posted_count
+                logger.error(f"Error posting paper {paper.get('id', '?')}: {e}")
+
+        await self.db.update_last_fetch_time()
+        logger.info(f"Posted {posted} papers to #{channel.name}")
+        return posted
 
     async def _post_paper(
-        self,
-        channel: discord.TextChannel,
-        paper: dict,
-        matched_keywords: set
+        self, channel: discord.TextChannel,
+        paper: dict, matched_keywords: set
     ) -> discord.Message:
-        """
-        Post a paper to a Discord channel.
-        
-        Args:
-            channel: Discord text channel
-            paper: Paper dictionary
-            matched_keywords: Keywords that matched this paper
-            
-        Returns:
-            Posted message
-        """
+        """Post a paper embed to Discord."""
+        # Color based on primary category
+        cat = paper.get('primary_category', '')
+        color = self._category_color(cat)
+
         embed = discord.Embed(
-            title=paper['title'][:256],  # Discord limit
+            title=paper['title'][:256],
             url=paper['url'],
             description=paper.get('summary', 'No summary available'),
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
+            color=color,
+            timestamp=datetime.utcnow()
         )
-        
-        # Authors (truncate if too long)
-        authors = ", ".join(paper.get('authors', []))
-        if len(authors) > 1024:
-            authors = authors[:1021] + "..."
-        embed.add_field(name="Authors", value=authors, inline=False)
-        
-        # Categories
-        categories = ", ".join(paper.get('categories', []))
-        embed.add_field(name="Categories", value=categories, inline=True)
-        
-        # Published date
-        published = paper.get('published', 'Unknown')
-        embed.add_field(name="Published", value=published, inline=True)
-        
-        # Matched keywords
-        keywords_str = ", ".join(sorted(matched_keywords))
-        embed.add_field(name="Matched Keywords", value=f"`{keywords_str}`", inline=False)
-        
-        # PDF link
+
+        # Authors (compact)
+        authors = paper.get('authors', [])
+        if len(authors) > 5:
+            authors_str = ", ".join(authors[:5]) + f" +{len(authors) - 5} more"
+        else:
+            authors_str = ", ".join(authors) or "Unknown"
+        embed.add_field(name="Authors", value=authors_str, inline=False)
+
+        # Categories + Keywords in one row
+        cats = ", ".join(paper.get('categories', [])[:5])
+        embed.add_field(name="Categories", value=f"`{cats}`", inline=True)
+
+        kw_str = ", ".join(sorted(matched_keywords))
+        embed.add_field(name="Matched", value=f"`{kw_str}`", inline=True)
+
+        # Links
+        links = f"[Abstract]({paper['url']})"
         if paper.get('pdf_url'):
-            embed.add_field(name="PDF", value=f"[Download]({paper['pdf_url']})", inline=True)
-        
-        # Footer
-        embed.set_footer(text=f"arXiv ID: {paper['id']}")
-        
-        message = await channel.send(embed=embed)
-        return message
+            links += f" | [PDF]({paper['pdf_url']})"
+        embed.add_field(name="Links", value=links, inline=False)
+
+        embed.set_footer(text=f"arXiv:{paper['id']}")
+
+        return await channel.send(embed=embed)
+
+    @staticmethod
+    def _category_color(category: str) -> discord.Color:
+        """Map arXiv category to embed color."""
+        colors = {
+            'cs.LG': discord.Color.blue(),
+            'cs.AI': discord.Color.purple(),
+            'cs.CL': discord.Color.green(),
+            'cs.CV': discord.Color.orange(),
+            'stat.ML': discord.Color.teal(),
+            'cs.IR': discord.Color.gold(),
+        }
+        return colors.get(category, discord.Color.greyple())

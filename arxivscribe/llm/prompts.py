@@ -1,13 +1,12 @@
 """Prompt templates for LLM summarization."""
 
-SUMMARY_PROMPT = """You are an expert AI research assistant. Generate a concise TLDR summary (1-3 sentences) for the following research paper.
+SUMMARY_PROMPT = """You are an expert ML research assistant. Write a concise TLDR (2-3 sentences max) for this paper.
 
-Focus on:
-- What problem the paper addresses
-- What the paper introduces or proposes
-- Key contributions or findings
-
-Keep it technical but accessible.
+Rules:
+- Focus on: what problem, what method/approach, key result or finding
+- Be technical but accessible to grad students
+- No filler phrases like "This paper presents..." — just state what it does
+- Include quantitative results if mentioned in the abstract
 
 Title: {title}
 
@@ -16,19 +15,26 @@ Abstract: {abstract}
 TLDR:"""
 
 
-KEYWORD_EXTRACTION_PROMPT = """Extract 3-5 key technical keywords or phrases from this paper that best represent its main topics and contributions.
+KEYWORD_EXTRACTION_PROMPT = """Extract 3-5 key technical keywords or phrases from this paper. Return ONLY a comma-separated list.
 
 Title: {title}
 
 Abstract: {abstract}
 
-Keywords (comma-separated):"""
+Keywords:"""
 
 
-RELEVANCE_PROMPT = """Determine if this paper is relevant to the following research interests: {interests}
+RELEVANCE_PROMPT = """Rate this paper's relevance to the interests: {interests}
 
 Title: {title}
-
 Abstract: {abstract}
 
-Answer with YES or NO, followed by a brief explanation:"""
+Answer YES or NO, then one sentence explaining why:"""
+
+
+WEEKLY_DIGEST_PROMPT = """Summarize these {count} papers into a cohesive 1-paragraph overview of this week's research trends. Mention the most notable findings.
+
+Papers:
+{papers_text}
+
+Weekly Summary:"""

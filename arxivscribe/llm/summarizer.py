@@ -1,7 +1,9 @@
-"""LLM-based paper summarizer."""
+"""LLM-based paper summarizer with concurrent processing."""
+import asyncio
 import logging
-from typing import Optional
-from arxivscribe.llm.prompts import SUMMARY_PROMPT
+from typing import Optional, List
+
+from arxivscribe.llm.prompts import SUMMARY_PROMPT, KEYWORD_EXTRACTION_PROMPT
 from arxivscribe.llm.providers.openai_provider import OpenAIProvider
 from arxivscribe.llm.providers.huggingface_provider import HuggingFaceProvider
 
@@ -9,30 +11,23 @@ logger = logging.getLogger(__name__)
 
 
 class Summarizer:
-    """Generates TLDR summaries of papers using LLMs."""
+    """Generates TLDR summaries with concurrency control."""
 
     def __init__(
         self,
         provider: str = "openai",
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        max_concurrent: int = 5,
         **kwargs
     ):
-        """
-        Initialize summarizer.
-        
-        Args:
-            provider: LLM provider ('openai' or 'huggingface')
-            api_key: API key for the provider
-            model: Model name (provider-specific)
-            **kwargs: Additional provider-specific arguments
-        """
         self.provider_name = provider.lower()
-        
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+
         if self.provider_name == "openai":
             self.provider = OpenAIProvider(
                 api_key=api_key,
-                model=model or "gpt-3.5-turbo",
+                model=model or "gpt-4o-mini",
                 **kwargs
             )
         elif self.provider_name == "huggingface":
@@ -43,97 +38,56 @@ class Summarizer:
             )
         else:
             raise ValueError(f"Unsupported provider: {provider}")
-        
-        logger.info(f"Initialized summarizer with provider: {provider}")
+
+        logger.info(f"Initialized summarizer: provider={provider}, model={self.provider.model}")
 
     async def summarize(self, paper: dict) -> str:
-        """
-        Generate a TLDR summary for a paper.
-        
-        Args:
-            paper: Paper dictionary with 'title' and 'abstract'
-            
-        Returns:
-            TLDR summary string
-        """
+        """Generate a TLDR summary for a paper."""
         title = paper.get('title', '')
         abstract = paper.get('abstract', '')
-        
+
         if not title or not abstract:
-            logger.warning(f"Missing title or abstract for paper {paper.get('id', 'unknown')}")
-            return "Summary unavailable due to missing information."
-        
+            return "Summary unavailable — missing title or abstract."
+
         try:
-            # Build prompt
-            prompt = SUMMARY_PROMPT.format(title=title, abstract=abstract)
-            
-            # Get summary from provider
-            summary = await self.provider.generate(prompt)
-            
-            # Validate and clean summary
-            summary = self._clean_summary(summary)
-            
-            logger.debug(f"Generated summary for paper {paper.get('id', 'unknown')}")
-            return summary
-            
+            async with self._semaphore:
+                prompt = SUMMARY_PROMPT.format(title=title, abstract=abstract)
+                summary = await self.provider.generate(prompt)
+                return self._clean_summary(summary)
         except Exception as e:
-            logger.error(f"Error generating summary for {paper.get('id', 'unknown')}: {e}")
+            logger.error(f"Summary failed for {paper.get('id', '?')}: {e}")
             return "Summary generation failed."
 
+    async def extract_keywords(self, paper: dict) -> List[str]:
+        """Extract keywords from a paper using LLM."""
+        title = paper.get('title', '')
+        abstract = paper.get('abstract', '')
+        if not abstract:
+            return []
+        try:
+            async with self._semaphore:
+                prompt = KEYWORD_EXTRACTION_PROMPT.format(title=title, abstract=abstract)
+                result = await self.provider.generate(prompt)
+                return [k.strip().lower() for k in result.split(",") if k.strip()]
+        except Exception as e:
+            logger.error(f"Keyword extraction failed for {paper.get('id', '?')}: {e}")
+            return []
+
     def _clean_summary(self, summary: str) -> str:
-        """
-        Clean and validate the generated summary.
-        
-        Args:
-            summary: Raw summary from LLM
-            
-        Returns:
-            Cleaned summary
-        """
-        # Remove extra whitespace
         summary = " ".join(summary.split())
-        
-        # Ensure it's not too long (Discord embed description limit is 4096)
+        # Remove common LLM prefixes
+        for prefix in ["TLDR:", "TL;DR:", "Summary:"]:
+            if summary.upper().startswith(prefix.upper()):
+                summary = summary[len(prefix):].strip()
         if len(summary) > 500:
             summary = summary[:497] + "..."
-        
-        # Ensure it's not empty
-        if not summary or summary.isspace():
-            return "No summary available."
-        
-        return summary
+        return summary or "No summary available."
 
     async def batch_summarize(self, papers: list) -> list:
-        """
-        Generate summaries for multiple papers.
-        
-        Args:
-            papers: List of paper dictionaries
-            
-        Returns:
-            List of paper dictionaries with 'summary' field added
-        """
-        summarized_papers = []
-        
-        for paper in papers:
-            try:
-                summary = await self.summarize(paper)
-                paper['summary'] = summary
-                summarized_papers.append(paper)
-            except Exception as e:
-                logger.error(f"Error in batch summarize for {paper.get('id')}: {e}")
-                paper['summary'] = "Summary generation failed."
-                summarized_papers.append(paper)
-        
-        return summarized_papers
+        """Summarize multiple papers concurrently."""
+        tasks = [self._summarize_one(p) for p in papers]
+        return await asyncio.gather(*tasks)
 
-    def set_provider(self, provider: str, api_key: Optional[str] = None, **kwargs):
-        """
-        Switch to a different LLM provider.
-        
-        Args:
-            provider: Provider name
-            api_key: API key
-            **kwargs: Additional arguments
-        """
-        self.__init__(provider=provider, api_key=api_key, **kwargs)
+    async def _summarize_one(self, paper: dict) -> dict:
+        paper['summary'] = await self.summarize(paper)
+        return paper
