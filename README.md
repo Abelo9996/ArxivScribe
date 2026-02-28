@@ -1,5 +1,7 @@
 # ArxivScribe
 
+[![GitHub stars](https://img.shields.io/github/stars/Abelo9996/ArxivScribe?style=social)](https://github.com/Abelo9996/ArxivScribe)
+
 **AI-powered arXiv paper digests — fetch, summarize, search, and organize research papers.**
 
 ArxivScribe is a local-first research tool that monitors arXiv, generates AI summaries, and helps you stay on top of the papers that matter. Runs as a web app on your machine or from the CLI. No account needed, your data stays local.

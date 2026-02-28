@@ -196,6 +196,16 @@ mark.kw-highlight { background: rgba(63,185,80,0.2); color: var(--green); border
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
 .empty-state p:first-child { font-size: 1.3rem; margin-bottom: 8px; }
 
+/* GitHub Star Button */
+.github-star-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 6px; font-size: 0.85rem; font-weight: 600;
+    color: #fff; background: linear-gradient(135deg, #2ea043, #238636); border: 1px solid #2ea043;
+    text-decoration: none; transition: all 0.2s; white-space: nowrap;
+}
+.github-star-btn:hover { background: linear-gradient(135deg, #3fb950, #2ea043); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(46,160,67,0.4); }
+.github-star-btn svg { flex-shrink: 0; }
+
 /* Mobile */
 @media (max-width: 600px) {
     header { padding: 10px 16px; flex-wrap: wrap; gap: 8px; }
