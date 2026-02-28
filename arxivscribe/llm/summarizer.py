@@ -6,6 +6,7 @@ from typing import Optional, List
 from arxivscribe.llm.prompts import SUMMARY_PROMPT, KEYWORD_EXTRACTION_PROMPT
 from arxivscribe.llm.providers.openai_provider import OpenAIProvider
 from arxivscribe.llm.providers.huggingface_provider import HuggingFaceProvider
+from arxivscribe.llm.providers.ollama_provider import OllamaProvider
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,13 @@ class Summarizer:
                 model=model or "facebook/bart-large-cnn",
                 **kwargs
             )
+        elif self.provider_name == "ollama":
+            self.provider = OllamaProvider(
+                model=model or "llama3.2",
+                **kwargs
+            )
         else:
-            raise ValueError(f"Unsupported provider: {provider}")
+            raise ValueError(f"Unsupported provider: {provider}. Use: openai, huggingface, ollama")
 
         logger.info(f"Initialized summarizer: provider={provider}, model={self.provider.model}")
 

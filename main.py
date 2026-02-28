@@ -69,10 +69,23 @@ async def lifespan(app: FastAPI):
 
     set_app_deps(db, fetcher, summarizer, categories, config)
 
+    # Start digest scheduler if SMTP configured
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+    digest_scheduler = None
+    if smtp_user and smtp_pass:
+        from arxivscribe.digest import DigestMailer, DigestScheduler
+        mailer = DigestMailer(smtp_user=smtp_user, smtp_pass=smtp_pass)
+        digest_scheduler = DigestScheduler(db, fetcher, summarizer, mailer, categories)
+        digest_scheduler.start()
+        logger.info("Digest email scheduler started")
+
     logger.info("ArxivScribe started at http://localhost:8000")
 
     yield
 
+    if digest_scheduler:
+        digest_scheduler.stop()
     await db.close()
 
 

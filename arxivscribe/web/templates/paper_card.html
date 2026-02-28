@@ -1,0 +1,34 @@
+<article class="paper-card" data-id="{{ paper.id }}">
+    <div class="paper-vote">
+        <button class="vote-btn vote-up" data-id="{{ paper.id }}" data-type="up">&#9650;</button>
+        <span class="vote-score">{{ paper.score }}</span>
+        <button class="vote-btn vote-down" data-id="{{ paper.id }}" data-type="down">&#9660;</button>
+    </div>
+    <div class="paper-content">
+        <h3 class="paper-title">
+            <a href="{{ paper.url }}" target="_blank" rel="noopener">{{ paper.title }}</a>
+        </h3>
+        <p class="paper-authors">{{ paper.authors | join(', ') }}</p>
+        {% if paper.summary %}
+        <p class="paper-summary">{{ paper.summary }}</p>
+        {% endif %}
+        <div class="paper-meta">
+            {% for cat in paper.categories %}
+            <span class="cat-tag">{{ cat }}</span>
+            {% endfor %}
+            {% for kw in paper.matched_keywords %}
+            {% if kw %}
+            <span class="kw-tag">{{ kw }}</span>
+            {% endif %}
+            {% endfor %}
+            <span class="paper-date">{{ paper.published[:10] if paper.published else '' }}</span>
+            {% if paper.pdf_url %}
+            <a href="{{ paper.pdf_url }}" target="_blank" class="pdf-link">PDF</a>
+            {% endif %}
+        </div>
+        <div class="paper-actions">
+            <button class="action-btn bookmark-btn" data-id="{{ paper.id }}" title="Bookmark">&#9733;</button>
+            <button class="action-btn similar-btn" data-id="{{ paper.id }}" title="Find similar">&#8776;</button>
+        </div>
+    </div>
+</article>
